@@ -69,7 +69,7 @@ class MaskWeightedCrossEntropyLoss(nn.Module):
         mask: NHW
         '''
         n, c, h, w = predict.size()
-        mask = mask.byte()
+        mask = mask>0
         target_inmask = target[mask]
         target_outmask = target[~mask]
         predict = predict.transpose(1, 2).transpose(2, 3).contiguous()

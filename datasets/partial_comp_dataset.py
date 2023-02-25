@@ -21,6 +21,8 @@ class PartialCompDataset(Dataset):
         self.dataset = config['dataset']
         if self.dataset == 'COCOA':
             self.data_reader = reader.COCOADataset(config['{}_annot_file'.format(phase)])
+        elif self.dataset == 'mada':
+            self.data_reader = reader.MADADataset(config['{}_annot_file'.format(phase)])
         elif self.dataset == 'Mapillary':
             self.data_reader = reader.MapillaryDataset(
                 config['{}_root'.format(phase)], config['{}_annot_file'.format(phase)])

@@ -39,7 +39,7 @@ data:
     load_rgb: False
     batch_size: 32
     batch_size_val: 32
-    workers: 2
+    workers: 4
 
 trainer:
     initial_val: True

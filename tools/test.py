@@ -32,7 +32,7 @@ def parse_args():
 
 def main(args):
     with open(args.config) as f:
-        config = yaml.load(f)
+        config = yaml.full_load(f)
 
     for k, v in config.items():
         setattr(args, k, v)
@@ -54,6 +54,8 @@ class Tester(object):
         self.data_root = self.args.image_root
         if dataset == 'COCOA':
             self.data_reader = reader.COCOADataset(self.args.annotation)
+        elif dataset == 'mada':
+            self.data_reader = reader.MADADataset(self.args.annotation)
         else:
             self.data_reader = reader.KINSLVISDataset(
                 dataset, self.args.annotation)
@@ -101,13 +103,23 @@ class Tester(object):
             modal, category, bboxes, amodal_gt, image_fn = self.data_reader.get_image_instances(
                 i, with_gt=True)
 
+            areas = [m.sum() for m in modal]
+            if len(areas) > 20:
+                idx_ = np.asarray(areas).argsort()[-20:]
+            else:
+                idx_ = np.random.permutation(len(areas))
+            modal = modal[idx_]
+            amodal_gt = amodal_gt[idx_]
+            bboxes = bboxes[idx_]
+
             # data
             image = np.array(Image.open(os.path.join(self.data_root, image_fn)).convert('RGB'))
             h, w = image.shape[:2]
             bboxes = self.expand_bbox(bboxes)
 
             # gt order
-            gt_order_matrix = infer.infer_gt_order(modal, amodal_gt)
+            # gt_order_matrix = infer.infer_gt_order(modal, amodal_gt)
+            gt_order_matrix = infer.infer_gt_order_mutual(modal, amodal_gt)
 
             # infer order
             if self.args.order_method == 'area':
@@ -121,7 +133,11 @@ class Tester(object):
                 order_matrix = infer.infer_order_convex(modal)
 
             elif self.args.order_method == 'ours':
-                order_matrix = infer.infer_order(
+                # order_matrix = infer.infer_order(
+                #     self.model, image, modal, category, bboxes,
+                #     use_rgb=self.args.model['use_rgb'], th=order_th, dilate_kernel=0,
+                #     input_size=256, min_input_size=16, interp='nearest', debug_info=False)
+                order_matrix = infer.infer_order_mutual(
                     self.model, image, modal, category, bboxes,
                     use_rgb=self.args.model['use_rgb'], th=order_th, dilate_kernel=0,
                     input_size=256, min_input_size=16, interp='nearest', debug_info=False)
@@ -171,7 +187,7 @@ class Tester(object):
                 raise Exception("No such method: {}".format(self.args.method))
 
             # eval
-            allpair_true, allpair, occpair_true, occpair, _ = infer.eval_order(
+            allpair_true, allpair, occpair_true, occpair, _ = infer.eval_order_mutual(
                 order_matrix, gt_order_matrix)
             allpair_true_rec.update(allpair_true)
             allpair_rec.update(allpair)

@@ -1,4 +1,5 @@
 import numpy as np
+import warnings
 
 import torch
 import torch.nn as nn
@@ -121,7 +122,9 @@ class PartialCompletionMask(SingleStageModel):
             output = self.model(torch.cat([self.mask, self.eraser], dim=1))
         loss = self.criterion(output, self.target, self.eraser.squeeze(1)) / self.world_size
         self.optim.zero_grad()
-        loss.backward()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            loss.backward()
         utils.average_gradients(self.model)
         self.optim.step()
         return {'loss': loss}

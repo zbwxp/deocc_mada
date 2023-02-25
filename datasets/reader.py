@@ -6,6 +6,7 @@ sys.path.append('.')
 
 import cvbase as cvb
 import pycocotools.mask as maskUtils
+from pycocotools.coco import COCO
 import utils
 
 def read_KINS(ann):
@@ -92,7 +93,7 @@ class COCOADataset(object):
         img_info = self.images_info[imgidx]
         image_fn = img_info['file_name']
         w, h = img_info['width'], img_info['height']
-        # region
+        # regions
         reg = self.annot_info[imgidx]['regions'][regidx]
         modal, bbox, category = read_COCOA(reg, h, w)
         if with_gt:
@@ -121,6 +122,83 @@ class COCOADataset(object):
             if with_gt:
                 amodal = maskUtils.decode(maskUtils.merge(
                     maskUtils.frPyObjects([reg['segmentation']], h, w)))
+                ret_amodal.append(amodal)
+        if with_anns:
+            return np.array(ret_modal), np.array(ret_category), np.array(ret_bboxes), np.array(ret_amodal), image_fn, ann_info
+        else:
+            return np.array(ret_modal), np.array(ret_category), np.array(ret_bboxes), np.array(ret_amodal), image_fn
+
+class MADADataset(object):
+
+    def __init__(self, annot_fn):
+        self.api = COCO(annot_fn)
+        data = cvb.load(annot_fn)
+        self.images_info = data['images']
+        self.annot_info = data['annotations']
+
+        self.indexing = []
+        for i, ann in enumerate(self.annot_info):
+            self.indexing.append(i)
+
+    def get_instance_length(self):
+        return len(self.indexing)
+
+    def get_image_length(self):
+        return len(self.images_info)
+
+    def get_gt_ordering(self, imgidx):
+        num = len(self.annot_info[imgidx]['regions'])
+        gt_order_matrix = np.zeros((num, num), dtype=np.int)
+        order_str = self.annot_info[imgidx]['depth_constraint']
+        if len(order_str) == 0:
+            return gt_order_matrix
+        order_str = order_str.split(',')
+        for o in order_str:
+            idx1, idx2 = o.split('-')
+            idx1, idx2 = int(idx1) - 1, int(idx2) - 1
+            gt_order_matrix[idx1, idx2] = 1
+            gt_order_matrix[idx2, idx1] = -1
+        return gt_order_matrix # num x num
+
+    def get_instance(self, idx, with_gt=False):
+        # imgidx, regidx = self.indexing[idx]
+        reg = self.api.loadAnns(int(idx))[0]
+        imgidx = reg['image_id']
+        # img
+        img_info = self.images_info[imgidx]
+        image_fn = img_info['file_name']
+        w, h = img_info['width'], img_info['height']
+        # xregion
+        # reg = self.annot_info[imgidx]['regions'][regidx]
+        modal, bbox, category = read_COCOA(reg, h, w)
+        if with_gt:
+            amodal = maskUtils.decode(maskUtils.merge(
+                maskUtils.frPyObjects([reg['segmentation']], h, w)))
+        else:
+            amodal = None
+        return modal, bbox, category, image_fn, amodal
+
+    def get_image_instances(self, idx, with_gt=False, with_anns=False, ignore_stuff=False):
+        ann_ids = self.api.getAnnIds(idx)
+        anns = self.api.loadAnns(ann_ids)
+        img_info = self.images_info[idx]
+        image_fn = img_info['file_name']
+        w, h = img_info['width'], img_info['height']
+        ret_modal = []
+        ret_bboxes = []
+        ret_category = []
+        ret_amodal = []
+        for reg in anns:
+            if ignore_stuff and reg['isStuff']:
+                continue
+            modal, bbox, category = read_COCOA(reg, h, w)
+            if modal.sum() == 0:
+                continue
+            ret_modal.append(modal)
+            ret_bboxes.append(bbox)
+            ret_category.append(category)
+            if with_gt:
+                amodal = maskUtils.decode(reg['segmentation'])
                 ret_amodal.append(amodal)
         if with_anns:
             return np.array(ret_modal), np.array(ret_category), np.array(ret_bboxes), np.array(ret_amodal), image_fn, ann_info
@@ -236,7 +314,7 @@ class MapillaryDataset(object):
         # img
         image_id = self.annot_info[imgidx]['image_id']
         image_fn = image_id + ".jpg"
-        # region
+        # -region
         instance_map = np.array(
             Image.open("{}/instances/{}.png".format(
             self.root, image_id)), dtype=np.uint16)
@@ -253,7 +331,7 @@ class MapillaryDataset(object):
         # img
         image_id = self.annot_info[idx]['image_id']
         image_fn = image_id + ".jpg"
-        # region
+        # -region
         instance_map = np.array(
             Image.open("{}/instances/{}.png".format(
             self.root, image_id)), dtype=np.uint16)

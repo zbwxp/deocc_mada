@@ -11,7 +11,7 @@ from trainer import Trainer
 
 def main(args):
     with open(args.config) as f:
-        config = yaml.load(f)
+        config = yaml.full_load(f)
 
     for k, v in config.items():
         setattr(args, k, v)

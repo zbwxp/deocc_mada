@@ -264,6 +264,82 @@ def infer_order(model, image, inmodal, category, bboxes, use_rgb=True, th=0.5, d
         return order_matrix, ind, inmodal_patches, eraser_patches, amodal_patches
     else:
         return order_matrix
+    
+def infer_order_mutual(model, image, inmodal, category, bboxes, use_rgb=True, th=0.5, dilate_kernel=0, input_size=None, min_input_size=32, interp='nearest', debug_info=False):
+    '''
+    image: HW3, inmodal: NHW, category: N, bboxes: N4
+    '''
+    deal_with_fullcover = False
+    num = inmodal.shape[0]
+    order_matrix = np.zeros((num, num), dtype=np.int)
+    ind = []
+    if deal_with_fullcover:
+        fullcover_inds = []
+    for i in range(num):
+        for j in range(i + 1, num):
+            if bordering(inmodal[i], inmodal[j]):
+                ind.append([i, j])
+                ind.append([j, i])
+            if deal_with_fullcover:
+                fullcover = fullcovering(inmodal[i], inmodal[j], bboxes[i], bboxes[j])
+                if fullcover == 1:
+                    fullcover_inds.append([i, j])
+                elif fullcover == 2:
+                    fullcover_inds.append([j, i])
+    pairnum = len(ind)
+    if pairnum == 0:
+        return order_matrix
+    ind = np.array(ind)
+    eraser_patches = []
+    inmodal_patches = []
+    amodal_patches = []
+    ratios = []
+    for i in range(pairnum):
+        tid = ind[i, 0]
+        eid = ind[i, 1]
+        image_patch = utils.crop_padding(image, bboxes[tid], pad_value=(0,0,0))
+        inmodal_patch = utils.crop_padding(inmodal[tid], bboxes[tid], pad_value=(0,))
+        if input_size is not None:
+            newsize = input_size
+        elif min_input_size > bboxes[tid,2]:
+            newsize = min_input_size
+        else:
+            newsize = None
+        if newsize is not None:
+            inmodal_patch = resize_mask(inmodal_patch, newsize, interp)
+        eraser = utils.crop_padding(inmodal[eid], bboxes[tid], pad_value=(0,))
+        if newsize is not None:
+            eraser = resize_mask(eraser, newsize, interp)
+        if dilate_kernel > 0:
+            eraser = cv2.dilate(eraser, np.ones((dilate_kernel, dilate_kernel), np.uint8),
+                                iterations=1)
+        # erase inmodal
+        inmodal_patch[eraser == 1] = 0
+        # gather
+        inmodal_patches.append(inmodal_patch)
+        eraser_patches.append(eraser)
+        amodal_patches.append(net_forward(
+            model, image_patch, inmodal_patch * category[tid], eraser, use_rgb, th))
+        ratios.append(1. if newsize is None else bboxes[tid,2] / float(newsize))
+
+    occ_value_matrix = np.zeros((num, num), dtype=np.float32)
+    for i, idx in enumerate(ind):
+        occ_value_matrix[idx[0], idx[1]] = (
+            ((amodal_patches[i] > inmodal_patches[i]) & (eraser_patches[i] == 1)
+             ).sum() * (ratios[i] ** 2))
+    order_matrix[occ_value_matrix > occ_value_matrix.transpose()] = -1
+    order_matrix[occ_value_matrix < occ_value_matrix.transpose()] = 1
+    order_matrix[(occ_value_matrix == 0) & (occ_value_matrix == 0).transpose()] = 0
+    if deal_with_fullcover:
+        for fc in fullcover_inds:
+            assert order_matrix[fc[0], fc[1]] == 0
+            order_matrix[fc[0], fc[1]] = -1
+            order_matrix[fc[1], fc[0]] = 1
+    if debug_info:
+        return order_matrix, ind, inmodal_patches, eraser_patches, amodal_patches
+    else:
+        return order_matrix
+
 
 def bordering(a, b):
     dilate_kernel = np.array([[0, 1, 0],
@@ -308,6 +384,26 @@ def infer_gt_order(inmodal, amodal):
             gt_order_matrix[j, i] = -gt_order_matrix[i, j]
     return gt_order_matrix
  
+
+def infer_gt_order_mutual(inmodal, amodal):
+    #inmodal = inmodal.numpy()
+    #amodal = amodal.numpy()
+    num = inmodal.shape[0]
+    gt_order_matrix = np.zeros((num, num), dtype=np.int)
+
+    for i in range(num):
+        for j in range(num):
+            if not bordering(inmodal[i], inmodal[j]):
+                continue
+            if i==j: continue
+            occ_ij = ((inmodal[i] == 1) & (amodal[j] == 1)).sum()  
+            occ_ji = ((inmodal[j] == 1) & (amodal[i] == 1)).sum()  # any overlap, overlap
+            if occ_ij <= 16 and occ_ji <= 16: # bordering but not occluded
+                continue
+            gt_order_matrix[i, j] = -1 if occ_ji > 16 else 1
+
+    return gt_order_matrix
+ 
            
 def eval_order(order_matrix, gt_order_matrix):
     inst_num = order_matrix.shape[0]
@@ -316,6 +412,20 @@ def eval_order(order_matrix, gt_order_matrix):
 
     occpair_true = ((order_matrix == gt_order_matrix) & (gt_order_matrix != 0)).sum() / 2
     occpair = (gt_order_matrix != 0).sum() / 2
+
+    err = np.where(order_matrix != gt_order_matrix)
+    gt_err = gt_order_matrix[err]
+    pred_err = order_matrix[err]
+    show_err = np.concatenate([np.array(err).T + 1, gt_err[:,np.newaxis], pred_err[:,np.newaxis]], axis=1)
+    return allpair_true, allpair, occpair_true, occpair, show_err
+
+def eval_order_mutual(order_matrix, gt_order_matrix):
+    inst_num = order_matrix.shape[0]
+    allpair_true = ((order_matrix == gt_order_matrix).sum() - inst_num)
+    allpair = (inst_num  * inst_num - inst_num)
+
+    occpair_true = ((order_matrix == gt_order_matrix) & (gt_order_matrix != 0)).sum()
+    occpair = (gt_order_matrix != 0).sum()
 
     err = np.where(order_matrix != gt_order_matrix)
     gt_err = gt_order_matrix[err]
