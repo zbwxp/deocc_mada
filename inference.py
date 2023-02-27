@@ -7,7 +7,7 @@ import torch.nn as nn
 import utils
 import pdb
 from skimage.morphology import convex_hull
-
+import matplotlib.pyplot as plt
 def to_eraser(inst, bbox, newbbox):
     inst = inst.squeeze(0).numpy()
     final_h, final_w = inst.shape[:2]
@@ -290,9 +290,11 @@ def fullcovering(mask1, mask2, box1, box2):
     else:
         return 0
 
-def infer_gt_order(inmodal, amodal):
+def infer_gt_order(inmodal, amodal, amodal_gt=None, map_pred=None, inference=False):
     #inmodal = inmodal.numpy()
     #amodal = amodal.numpy()
+    uncertain_count = 0
+    uncertain_correct = 0
     num = inmodal.shape[0]
     gt_order_matrix = np.zeros((num, num), dtype=np.int)
     for i in range(num):
@@ -304,9 +306,60 @@ def infer_gt_order(inmodal, amodal):
             #assert not (occ_ij > 0 and occ_ji > 0) # assertion error, why?
             if occ_ij == 0 and occ_ji == 0: # bordering but not occluded
                 continue
-            gt_order_matrix[i, j] = 1 if occ_ij >= occ_ji else -1
-            gt_order_matrix[j, i] = -gt_order_matrix[i, j]
-    return gt_order_matrix
+
+            if map_pred is not None:
+                occ_ij = map_pred[i, j]
+                occ_ji = map_pred[j, i]
+                # if occ_ij * occ_ji > 0 and abs(occ_ij - occ_ji)<0:
+                #     occ_ij = ((inmodal[i] == 1) & (amodal[j] == 1)).sum()
+                #     occ_ji = ((inmodal[j] == 1) & (amodal[i] == 1)).sum()
+                # #     gt_order_matrix[i, j] = 1 if occ_ij >= occ_ji else -1
+                # #     gt_order_matrix[j, i] = -gt_order_matrix[i, j]
+                # else:o
+                occ_ij_gt = ((inmodal[i] == 1) & (amodal_gt[j] == 1)).sum()
+                occ_ji_gt = ((inmodal[j] == 1) & (amodal_gt[i] == 1)).sum()
+                gt_order_gt = 1 if occ_ij_gt >= occ_ji_gt else -1
+
+                # if occ_ij.argmax() != occ_ji.argmax():
+                #     gt_order_matrix[i, j] = -1 if occ_ij.argmax() else 1
+
+                # else:
+                #     occ_ij = ((inmodal[i] == 1) & (amodal[j] == 1)).sum()
+                #     occ_ji = ((inmodal[j] == 1) & (amodal[i] == 1)).sum()
+                #     gt_order_matrix[i, j] = 1 if occ_ij >= occ_ji else -1
+                #     # gt_order_matrix[i, j] = -1 if occ_ji.max() > occ_ij.max() else 1
+                #     if gt_order_matrix[i, j] == gt_order_gt:
+                #         uncertain_correct += 1
+                #     uncertain_count += 1
+                if abs(occ_ij - occ_ji)<2:
+                    gt_order_matrix[i, j] = -1 if occ_ij >= occ_ji else 1
+                else:
+                    # occ_ij = ((inmodal[i] == 1) & (amodal[j] == 1)).sum()
+                    # occ_ji = ((inmodal[j] == 1) & (amodal[i] == 1)).sum()
+                    # gt_order_matrix[i, j] = 1 if occ_ij >= occ_ji else -1
+                    gt_order_matrix[i, j] = -1 if occ_ij >= occ_ji else 1
+                    if gt_order_matrix[i, j] == gt_order_gt:
+                        uncertain_correct += 1
+
+                    uncertain_count += 1
+
+                gt_order_matrix[j, i] = -gt_order_matrix[i, j]
+                # gt_order_matrix[j, i] = -gt_order_matrix[i, j]
+            else:
+                if inference:
+                    gt_order_matrix[i, j] = 1 if occ_ij >= occ_ji else -1
+                    gt_order_matrix[j, i] = -gt_order_matrix[i, j]
+
+                    occ_ij_gt = ((inmodal[i] == 1) & (amodal_gt[j] == 1)).sum()
+                    occ_ji_gt = ((inmodal[j] == 1) & (amodal_gt[i] == 1)).sum()
+                    gt_order_gt = 1 if occ_ij_gt >= occ_ji_gt else -1
+                    if gt_order_matrix[i, j] != gt_order_gt:
+                        print()
+                else:
+                    gt_order_matrix[i, j] = 1 if occ_ij >= occ_ji else -1
+                    gt_order_matrix[j, i] = -gt_order_matrix[i, j]
+
+    return gt_order_matrix, uncertain_count, uncertain_correct
  
            
 def eval_order(order_matrix, gt_order_matrix):
