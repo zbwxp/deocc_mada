@@ -13,7 +13,7 @@ import torchvision.transforms as transforms
 
 import utils
 from . import reader
-
+import matplotlib.pyplot as plt
 
 class PartialCompDataset(Dataset):
 
@@ -71,7 +71,10 @@ class PartialCompDataset(Dataset):
             return Image.open(fn).convert('RGB')
 
     def _get_inst(self, idx, load_rgb=False, randshift=False):
-        modal, bbox, category, imgfn, _ = self.data_reader.get_instance(idx)
+        modal, bbox, category, imgfn, amodal = self.data_reader.get_instance(idx, with_gt=randshift)
+        if amodal is not None and (modal != amodal).sum()==0:
+            amodal = None
+
         centerx = bbox[0] + bbox[2] / 2.
         centery = bbox[1] + bbox[3] / 2.
         size = max([np.sqrt(bbox[2] * bbox[3] * self.config['enlarge_box']), bbox[2] * 1.1, bbox[3] * 1.1])
@@ -90,11 +93,16 @@ class PartialCompDataset(Dataset):
         new_bbox = [int(centerx - size / 2.), int(centery - size / 2.), int(size), int(size)]
         modal = cv2.resize(utils.crop_padding(modal, new_bbox, pad_value=(0,)),
             (self.sz, self.sz), interpolation=cv2.INTER_NEAREST)
+        if amodal is not None:
+            amodal = cv2.resize(utils.crop_padding(amodal, new_bbox, pad_value=(0,)),
+                (self.sz, self.sz), interpolation=cv2.INTER_NEAREST)
 
         # flip
         if self.config['base_aug']['flip'] and np.random.rand() > 0.5:
             flip = True
             modal = modal[:, ::-1]
+            if amodal is not None:
+                amodal = amodal[:, ::-1]
         else:
             flip = False
 
@@ -109,15 +117,19 @@ class PartialCompDataset(Dataset):
             rgb = self.img_transform(rgb) # CHW
 
         if load_rgb:
+            if randshift:
+                return modal, category, rgb, amodal
             return modal, category, rgb
         else:
+            if randshift:
+                return modal, category, None, amodal
             return modal, category, None
 
     def __getitem__(self, idx):
         if self.memcached:
             self._init_memcached()
         randidx = np.random.choice(len(self))
-        modal, category, rgb = self._get_inst(
+        modal, category, rgb, amodal = self._get_inst(
             idx, load_rgb=self.config['load_rgb'], randshift=True) # modal, uint8 {0, 1}
         if not self.config.get('use_category', True):
             category = 1
@@ -149,5 +161,10 @@ class PartialCompDataset(Dataset):
             rgb = torch.zeros((3, self.sz, self.sz), dtype=torch.float32) # 3HW
         erased_modal_tensor = torch.from_numpy(
             erased_modal.astype(np.float32)).unsqueeze(0) # 1HW
-        target = torch.from_numpy(modal.astype(np.int)) # HW
+        if amodal is not None:
+            # prepare target
+            tmp = amodal * ((modal + eraser)>0)
+            target = torch.from_numpy(tmp.astype(np.int)) # HW
+        else:
+            target = torch.from_numpy(modal.astype(np.int)) # HW
         return rgb, erased_modal_tensor, eraser_tensor, target

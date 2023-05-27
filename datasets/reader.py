@@ -172,8 +172,9 @@ class MADADataset(object):
         # reg = self.annot_info[imgidx]['regions'][regidx]
         modal, bbox, category = read_COCOA(reg, h, w)
         if with_gt:
-            amodal = maskUtils.decode(maskUtils.merge(
-                maskUtils.frPyObjects([reg['segmentation']], h, w)))
+            # amodal = maskUtils.decode(maskUtils.merge(
+            #     maskUtils.frPyObjects([reg['segmentation']], h, w)))
+            amodal = maskUtils.decode(reg['segmentation'])
         else:
             amodal = None
         return modal, bbox, category, image_fn, amodal
